@@ -1,0 +1,5 @@
+# Local end file
+.env
+
+# SQLite DB file
+database.db
