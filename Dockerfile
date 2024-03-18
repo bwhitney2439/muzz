@@ -1,11 +1,12 @@
 # Building the binary of the App
-FROM golang:1.19 AS build
+FROM golang:1.22 AS build
 
 # `boilerplate` should be replaced with your project name
 WORKDIR /go/src/boilerplate
 
 # Copy all the Code and stuff to compile everything
 COPY . .
+COPY .env ./
 
 # Downloads all the dependencies in advance (could be left out, but it's more clear this way)
 RUN go mod download
@@ -19,9 +20,7 @@ FROM alpine:latest as release
 
 WORKDIR /app
 
-# Create the `public` dir and copy all the assets into it
-RUN mkdir ./static
-COPY ./static ./static
+
 
 # `boilerplate` should be replaced here as well
 COPY --from=build /go/src/boilerplate/app .

@@ -2,42 +2,34 @@ package handlers
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/bwhitney2439/muzz/database"
 	"github.com/bwhitney2439/muzz/models"
-	"github.com/bwhitney2439/muzz/types"
 	"github.com/bwhitney2439/muzz/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pioz/faker"
 )
 
-// UserList returns a list of users
-func UserList(c *fiber.Ctx) error {
-	// users := database.Get()
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"users":   true,
-	})
-}
-
-// UserCreate registers a user
 func CreateUser(c *fiber.Ctx) error {
 
 	user := new(models.User)
 	var userInput struct {
-		Email       string `json:"email"`
-		Password    string `json:"password"`
-		Name        string `json:"name"`
-		Gender      string `json:"gender"`
-		DateOfBirth string `json:"date_of_birth"`
+		Email       string          `json:"email"`
+		Password    string          `json:"password"`
+		Name        string          `json:"name"`
+		Gender      string          `json:"gender"`
+		DateOfBirth string          `json:"date_of_birth"`
+		Location    models.Location `json:"location" `
 	}
 
 	userInput.Email = faker.SafeEmail()
 	userInput.Password = faker.Username()
 	userInput.Name = faker.FullName()
+	userInput.Location.Latitude = faker.Float64InRange(-90, 90)
+	userInput.Location.Longitude = faker.Float64InRange(-90, 90)
 	genders := []string{"Male", "Female", "Other"}
 
 	userInput.Gender = genders[faker.IntInRange(0, len(genders)-1)]
@@ -64,7 +56,7 @@ func CreateUser(c *fiber.Ctx) error {
 	}
 	age := utils.CalculateAge(t)
 
-	user = &models.User{Email: userInput.Email, Password: userInput.Password, Name: userInput.Name, Gender: userInput.Gender, Age: uint8(age)}
+	user = &models.User{Email: userInput.Email, Password: userInput.Password, Name: userInput.Name, Gender: userInput.Gender, Age: uint8(age), Location: userInput.Location}
 	err = database.InsertUser(user)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Cannot insert user"})
@@ -117,11 +109,24 @@ func Discover(c *fiber.Ctx) error {
 
 	token := c.Locals("user").(*jwt.Token)
 	claims := token.Claims.(jwt.MapClaims)
-	user_id := claims["user_id"].(float64)
+	user_id := uint(claims["user_id"].(float64))
 
-	usersResponse := new([]types.UserResponse)
+	// Extract query parameters for age and gender.
+	ageQuery := c.Query("age")
+	genderQuery := c.Query("gender")
+	orderBy := c.Query("orderBy")
 
-	err := database.GetUsers(usersResponse, user_id)
+	var age *uint
+	if ageQuery != "" {
+		ageInt, err := strconv.Atoi(ageQuery)
+		if err != nil || ageInt < 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid age parameter"})
+		}
+		ageUint := uint(ageInt)
+		age = &ageUint
+	}
+
+	usersResponse, err := database.GetPotentialMatches(user_id, age, genderQuery, orderBy)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Cannot get users"})
 	}
@@ -145,7 +150,10 @@ func Swipe(c *fiber.Ctx) error {
 
 	matched, matchedUser, err := database.SwipeAction(uint(user_id), uint(swipeInput.TargetUserID), swipeInput.Preference)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Cannot insert swipe"})
+		if err.Error() == "swipe already exists" {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Swipe already exists between these users."})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "An unexpected error occurred."})
 	}
 	if matched {
 		return c.JSON(fiber.Map{"results": fiber.Map{
@@ -153,7 +161,6 @@ func Swipe(c *fiber.Ctx) error {
 			"matchID": matchedUser.ID,
 		}})
 	}
-
 	return c.JSON(fiber.Map{"results": fiber.Map{
 		"matched": matched,
 	}})

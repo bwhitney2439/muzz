@@ -3,6 +3,8 @@ package database
 import (
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 
 	"github.com/bwhitney2439/muzz/models"
 	"github.com/bwhitney2439/muzz/types"
@@ -69,75 +71,144 @@ func GetUsers(usersResponse *[]types.UserResponse, excludeUserID float64) error 
 	return nil
 }
 
-func GetPotentialMatches(userID uint) ([]models.User, error) {
-	var users []models.User
+func GetPotentialMatches(userID uint, age *uint, gender, orderBy string) (*[]types.UserResponse, error) {
 
-	subQuery := db.Model(&models.Swipe{}).Select("target_user_id").Where("user_id = ?", userID)
+	user := new(models.User)
 
-	err := db.Model(&models.User{}).
-		Where("id <> ?", userID).
-		Where("id NOT IN (?)", subQuery).
-		Find(&users).Error
-
+	err := db.Model(&models.User{}).Where("id = ?", userID).Scan(user).Error
 	if err != nil {
 		return nil, err
 	}
 
-	return users, nil
-}
+	userLong := user.Location.Longitude
+	userLat := user.Location.Latitude
 
-func SwipeAction(userID, targetUserID uint, preference string) (matched bool, matchedUser *types.UserResponse, err error) {
-	tx := db.Begin()
-	if tx.Error != nil {
-		return false, nil, tx.Error
+	// get list of userids where the user has already swiped
+	subQuery := db.Model(&models.Swipe{}).Select("target_user_id").Where("user_id = ?", userID)
+
+	// get list of users who have not been swiped by the user using subquery
+	query := db.Model(&models.User{}).Where("id <> ?", userID).Where("id NOT IN (?)", subQuery).Select("id", "name", "age", "gender", "latitude", "longitude", "attractiveness_score")
+
+	if age != nil {
+		query = query.Where("age = ?", *age)
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
+	if gender != "" {
+		query = query.Where("LOWER(gender) = ?", strings.ToLower(gender))
+	}
 
-	defer func() {
-		if err == nil {
-			err = tx.Commit().Error // Capture commit error
-		}
-		if err != nil {
-			tx.Rollback() // Only rollback if not already done and there's an error
-		}
-	}()
+	if orderBy == "attractiveness_score" {
+		query = query.Order("attractiveness_score desc")
+	}
 
+	matchedUsers := new([]types.UserResponse)
+
+	err = query.Scan(matchedUsers).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate the distance from the user.
+	for i := range *matchedUsers {
+		(*matchedUsers)[i].DistanceFromMe = utils.Haversine(userLat, userLong, (*matchedUsers)[i].Location.Latitude, (*matchedUsers)[i].Location.Longitude)
+	}
+	if orderBy == "distance" {
+
+		sort.Slice(*matchedUsers, func(i, j int) bool {
+			return (*matchedUsers)[i].DistanceFromMe < (*matchedUsers)[j].DistanceFromMe
+		})
+	}
+
+	return matchedUsers, nil
+}
+
+func BeginTransaction(db *gorm.DB) *gorm.DB {
+	return db.Begin()
+}
+
+func CheckExistingSwipe(tx *gorm.DB, userID, targetUserID uint) (bool, error) {
+	var count int64
+	tx.Model(&models.Swipe{}).Where("user_id = ? AND target_user_id = ?", userID, targetUserID).Count(&count)
+	return count > 0, nil
+}
+
+func CreateSwipe(tx *gorm.DB, userID, targetUserID uint, preference string) error {
 	swipe := models.Swipe{
 		UserID:       userID,
 		TargetUserID: targetUserID,
 		Preference:   preference,
 	}
-	if err := tx.Create(&swipe).Error; err != nil {
+	return tx.Create(&swipe).Error
+}
+
+func CheckForMatch(tx *gorm.DB, userID, targetUserID uint) (bool, error) {
+	var count int64
+	err := tx.Model(&models.Swipe{}).
+		Where("user_id = ? AND target_user_id = ? AND preference = 'YES'", targetUserID, userID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func GetMatchedUser(tx *gorm.DB, userID uint) (*types.UserResponse, error) {
+	matchedUser := new(types.UserResponse)
+	err := tx.Model(&models.User{}).Where("id = ?", userID).Select("id", "name", "age", "gender").Scan(matchedUser).Error
+	return matchedUser, err
+}
+
+func UpdateAttractivenessScore(tx *gorm.DB, targetUserID uint, preference string) error {
+	var increment int
+	if preference == "YES" {
+		increment = 1
+	} else {
+		increment = 0
+	}
+
+	err := tx.Model(&models.User{}).Where("id = ?", targetUserID).
+		Update("attractiveness_score", gorm.Expr("attractiveness_score + ?", increment)).Error
+
+	return err
+}
+
+func SwipeAction(userID, targetUserID uint, preference string) (bool, *types.UserResponse, error) {
+	tx := BeginTransaction(db)
+	if tx.Error != nil {
+		return false, nil, tx.Error
+	}
+
+	defer func() {
+		if r := recover(); r != nil || tx.Error != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	exists, err := CheckExistingSwipe(tx, userID, targetUserID)
+	if err != nil {
+		return false, nil, err
+	}
+	if exists {
+		return false, nil, fmt.Errorf("swipe already exists")
+	}
+
+	if err := CreateSwipe(tx, userID, targetUserID, preference); err != nil {
 		return false, nil, err
 	}
 
 	if preference != "YES" {
-		return false, nil, nil // Early return if preference is not YES, no need to rollback explicitly due to defer
+		return false, nil, nil
 	}
 
-	var count int64
-	err = tx.Model(&models.Swipe{}).
-		Where("user_id = ? AND target_user_id = ? AND preference = 'YES'", targetUserID, userID).
-		Count(&count).Error
+	err = UpdateAttractivenessScore(tx, targetUserID, preference)
 	if err != nil {
 		return false, nil, err
 	}
 
-	if count > 0 {
-		fmt.Println("Match found!")
-		matchedUser = new(types.UserResponse)
-		err := tx.Model(&models.User{}).Where("id = ?", userID).Select("id", "name", "age", "gender").Scan(matchedUser).Error
-		if err != nil {
-			return true, nil, err
-		}
-
-		return true, matchedUser, nil
+	matched, err := CheckForMatch(tx, userID, targetUserID)
+	if err != nil || !matched {
+		return matched, nil, err
 	}
 
-	return false, nil, nil
+	matchedUser, err := GetMatchedUser(tx, targetUserID)
+	return matched, matchedUser, err
 }

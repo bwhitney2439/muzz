@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"fmt"
 	"log"
+	"math"
 	"os"
 	"time"
 
@@ -19,12 +21,10 @@ func CheckPasswordHash(password, hash string) bool {
 	return err == nil
 }
 
-// use godot package to load/read the .env file and
-// return the value of the key
 func GoDotEnvVariable(key string) string {
 	// Check if the application is running in production
 	environment := os.Getenv("ENVIRONMENT")
-	// fmt.Println(os.Getenv("ENVIRONMENT"))
+	fmt.Println(os.Getenv("ENVIRONMENT"))
 	if environment != "production" {
 		// load .env file in non-production environments
 		err := godotenv.Load(".env")
@@ -44,4 +44,22 @@ func CalculateAge(birthDate time.Time) int {
 		age--
 	}
 	return age
+}
+
+// Used google to find haversine formula
+func Haversine(lat1, lon1, lat2, lon2 float64) float64 {
+	var R = 6371e3 // Earth radius in meters
+	var φ1 = lat1 * math.Pi / 180
+	var φ2 = lat2 * math.Pi / 180
+	var Δφ = (lat2 - lat1) * math.Pi / 180
+	var Δλ = (lon2 - lon1) * math.Pi / 180
+
+	var a = math.Sin(Δφ/2)*math.Sin(Δφ/2) +
+		math.Cos(φ1)*math.Cos(φ2)*
+			math.Sin(Δλ/2)*math.Sin(Δλ/2)
+	var c = 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	var d = R * c // Distance in meters
+
+	return d
 }
