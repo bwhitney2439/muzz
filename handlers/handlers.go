@@ -31,10 +31,7 @@ func CreateUser(c *fiber.Ctx) error {
 	userInput.Location.Latitude = faker.Float64InRange(-90, 90)
 	userInput.Location.Longitude = faker.Float64InRange(-90, 90)
 	genders := []string{"Male", "Female", "Other"}
-
 	userInput.Gender = genders[faker.IntInRange(0, len(genders)-1)]
-
-	// Generate a random date within the range
 	userInput.DateOfBirth = faker.Time().Format("02/01/2006")
 
 	var err error
@@ -111,7 +108,6 @@ func Discover(c *fiber.Ctx) error {
 	claims := token.Claims.(jwt.MapClaims)
 	user_id := uint(claims["user_id"].(float64))
 
-	// Extract query parameters for age and gender.
 	ageQuery := c.Query("age")
 	genderQuery := c.Query("gender")
 	orderBy := c.Query("orderBy")
