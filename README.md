@@ -123,17 +123,8 @@ These routes require a valid JWT token to be accessed, provided through the `Pro
 - **GET `/api/v1/discover`**: Discover potential matches based on user preferences. This endpoint accepts the following query parameters:
   - `age`: The age to filter potential matches. Must be a positive integer.
   - `gender`: The gender to filter potential matches. Acceptable values are typically "Male", "Female", or "Other", but check application settings for available options.
-  - `orderBy`: Specifies the order of the results. Options may include parameters such as "age" or "location", but specific implementations may vary.
+  - `orderBy`: Specifies the order of the results. Options may include parameters "attractiveness_score" or "distance".
 
-Example request: `/api/v1/discover?age=25&gender=Female&orderBy=age`
+Example request: `/api/v1/discover?age=25&gender=Female&orderBy=distance`
 - **POST `/api/v1/swipe`**: Swipe right or left on potential matches to express interest or disinterest.
-
-## Starting the Server
-
-To start the server on a custom port (default is 3000), use the `-port` flag:
-
-```sh
-go run app.go -port=:XXXX
-
-
 
